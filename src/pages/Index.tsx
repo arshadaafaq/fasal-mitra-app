@@ -5,6 +5,7 @@ import QuickActionCard from "@/components/QuickActionCard";
 import CameraCapture from "@/components/CameraCapture";
 import VoiceRecorder from "@/components/VoiceRecorder";
 import MarketPriceCard from "@/components/MarketPriceCard";
+import MarketAnalysisComponent from "@/components/MarketAnalysisComponent";
 import BottomNavigation from "@/components/BottomNavigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -82,8 +83,9 @@ const Index = () => {
       
       case "prices":
         return (
-          <div className="px-4 pb-20">
+          <div className="px-4 pb-20 space-y-6">
             <MarketPriceCard prices={marketPrices} />
+            <MarketAnalysisComponent />
           </div>
         );
       

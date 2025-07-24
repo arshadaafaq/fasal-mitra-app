@@ -14,7 +14,87 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      crop_diagnoses: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          diagnosis: Json | null
+          id: string
+          image_url: string | null
+          user_id: string | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          diagnosis?: Json | null
+          id?: string
+          image_url?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          diagnosis?: Json | null
+          id?: string
+          image_url?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      market_queries: {
+        Row: {
+          analysis: Json | null
+          created_at: string
+          crop: string
+          id: string
+          location: string
+          user_id: string | null
+        }
+        Insert: {
+          analysis?: Json | null
+          created_at?: string
+          crop: string
+          id?: string
+          location: string
+          user_id?: string | null
+        }
+        Update: {
+          analysis?: Json | null
+          created_at?: string
+          crop?: string
+          id?: string
+          location?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      voice_interactions: {
+        Row: {
+          created_at: string
+          id: string
+          language: string | null
+          response: string
+          transcript: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          language?: string | null
+          response: string
+          transcript: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          language?: string | null
+          response?: string
+          transcript?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

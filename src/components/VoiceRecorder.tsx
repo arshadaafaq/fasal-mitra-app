@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mic, MicOff, Volume2, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 interface VoiceRecorderProps {
   selectedLanguage: string;
@@ -24,59 +25,96 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
   };
 
   const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      
-      const audioChunks: Blob[] = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-      
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-        setIsProcessing(true);
-        
-        // Simulate speech recognition
-        setTimeout(() => {
-          const sampleQueries = {
-            en: ["What's the tomato price today?", "My wheat crop has yellow spots", "Show me PM Kisan scheme"],
-            hi: ["आज टमाटर का भाव क्या है?", "मेरी गेहूं की फसल में पीले धब्बे हैं", "पीएम किसान योजना दिखाएं"],
-            kn: ["ಇಂದು ಟೊಮೇಟೋ ಬೆಲೆ ಎಷ್ಟು?", "ನನ್ನ ಗೋಧಿ ಬೆಳೆಯಲ್ಲಿ ಹಳದಿ ಚುಕ್ಕೆಗಳಿವೆ", "ಪಿಎಂ ಕಿಸಾನ್ ಯೋಜನೆ ತೋರಿಸಿ"]
-          };
-          
-          const queries = sampleQueries[selectedLanguage as keyof typeof sampleQueries] || sampleQueries.en;
-          const randomQuery = queries[Math.floor(Math.random() * queries.length)];
-          setTranscript(randomQuery);
-          onVoiceQuery(randomQuery);
-          
-          // Simulate AI response
-          setTimeout(() => {
-            const responses = {
-              en: "Current tomato price is ₹45/kg. Market trend shows 8% increase from last week. Best time to sell!",
-              hi: "वर्तमान टमाटर की कीमत ₹45/किलो है। बाजार की प्रवृत्ति पिछले सप्ताह से 8% वृद्धि दिखाती है। बेचने का सबसे अच्छा समय!",
-              kn: "ಪ್ರಸ್ತುತ ಟೊಮೇಟೋ ಬೆಲೆ ₹45/ಕೆಜಿ. ಮಾರುಕಟ್ಟೆಯ ಪ್ರವೃತ್ತಿ ಕಳೆದ ವಾರದಿಂದ 8% ಹೆಚ್ಚಳವನ್ನು ತೋರಿಸುತ್ತದೆ. ಮಾರಾಟ ಮಾಡಲು ಉತ್ತಮ ಸಮಯ!"
-            };
-            setResponse(responses[selectedLanguage as keyof typeof responses] || responses.en);
-            setIsProcessing(false);
-          }, 2000);
-        }, 1500);
-        
-        stream.getTracks().forEach(track => track.stop());
-      };
-      
-      mediaRecorder.start();
-      setIsRecording(true);
-      
-    } catch (error) {
+    // Use real speech recognition instead of simulated recording
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       toast({
-        title: "Microphone access denied",
-        description: "Please allow microphone access to use voice features",
+        title: "Speech recognition not supported",
+        description: "Please use a modern browser with speech recognition support",
         variant: "destructive"
       });
+      return;
     }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN';
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+      setTranscript('');
+      setResponse('');
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+    
+    recognition.onresult = async (event) => {
+      const spokenText = event.results[0][0].transcript;
+      setTranscript(spokenText);
+      setIsProcessing(true);
+      onVoiceQuery(spokenText);
+      
+      try {
+        // Call Supabase Edge Function for AI processing
+        const { data, error } = await supabase.functions.invoke('voice-assistant', {
+          body: {
+            transcript: spokenText,
+            language: selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN'
+          }
+        });
+
+        if (error) throw error;
+
+        const aiResponse = data.response;
+        setResponse(aiResponse);
+
+        // Save interaction to database
+        await supabase.from('voice_interactions').insert({
+          transcript: spokenText,
+          response: aiResponse,
+          language: selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN'
+        });
+
+        // Automatically speak the response
+        if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance(aiResponse);
+          utterance.lang = selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN';
+          utterance.rate = 0.8;
+          speechSynthesis.speak(utterance);
+        }
+
+      } catch (error) {
+        console.error('Voice processing error:', error);
+        const errorMsg = "Sorry, I couldn't process your request. Please try again.";
+        setResponse(errorMsg);
+        
+        if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance(errorMsg);
+          utterance.lang = selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN';
+          speechSynthesis.speak(utterance);
+        }
+      } finally {
+        setIsProcessing(false);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      setIsRecording(false);
+      setIsProcessing(false);
+      toast({
+        title: "Speech recognition failed",
+        description: "Please try speaking again",
+        variant: "destructive"
+      });
+    };
+
+    recognition.start();
   };
 
   const stopRecording = () => {
