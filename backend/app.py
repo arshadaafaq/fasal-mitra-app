@@ -17,16 +17,13 @@ from google.adk.runners import Runner
 from google.genai import types
 
 
-def create_app(config_name='development'):
+async def create_app(config_name='development'):
     """Create and configure the Flask application."""
     app = Flask(__name__)
     app.config.from_object(config[config_name])
     
     # Initialize extensions
     CORS(app)
-    
-    # Initialize Firebase
-    # initialize_firebase()
     
     # Setup Google AI/Vertex AI environment variables for ADK
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT_ID", "woven-hangar-466817-m1")
@@ -41,17 +38,13 @@ def create_app(config_name='development'):
     os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     os.environ["GOOGLE_CLOUD_LOCATION"] = location
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
-    
-    # Set additional environment variables that might be needed
     os.environ["VERTEX_AI_PROJECT"] = project_id
     os.environ["VERTEX_AI_LOCATION"] = location
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
     
-    # Initialize Google AI client explicitly
+    # Initialize Google AI client
     try:
         from google.cloud import aiplatform
-        
-        # Initialize Vertex AI
         aiplatform.init(
             project=project_id,
             location=location,
@@ -66,12 +59,6 @@ def create_app(config_name='development'):
         print(f"ERROR: Credentials file not found at: {credentials_path}")
     else:
         print(f"DEBUG: Credentials file found at: {credentials_path}")
-    
-    # Debug: Check environment variables
-    print(f"DEBUG: GEMINI_MODEL_NAME = {os.getenv('GEMINI_MODEL_NAME')}")
-    print(f"DEBUG: GOOGLE_CLOUD_PROJECT = {os.environ.get('GOOGLE_CLOUD_PROJECT')}")
-    print(f"DEBUG: GOOGLE_CLOUD_LOCATION = {os.environ.get('GOOGLE_CLOUD_LOCATION')}")
-    print(f"DEBUG: GOOGLE_APPLICATION_CREDENTIALS = {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')}")
     
     # Initialize ADK Session Service and Runner
     APP_NAME = "fasal_mitra_kisan"
@@ -93,55 +80,6 @@ def create_app(config_name='development'):
         """Health check endpoint."""
         return jsonify({"status": "healthy", "service": "fasal-mitra-backend"})
 
-    
-    @app.route('/api/registerFarmer', methods=['POST'])
-    def register_farmer():
-        """Register a new farmer in Firestore"""
-        try:
-            # Validate request data using Pydantic
-            data = request.get_json()
-            if not data:
-                error_response = ErrorResponse(
-                    error="Request body is required",
-                    status="error"
-                )
-                return jsonify(error_response.dict()), 400
-            
-            # Parse and validate farmer data
-            farmer_create = FarmerCreate(**data)
-            
-            # Create farmer response object
-            farmer_response = FarmerResponse.from_farmer_create(farmer_create)
-            
-            # Store in Firestore
-            # TODO:: UNcomment
-            # saved_farmer = register_farmer_in_db(farmer_response)
-            
-            # Return success response
-            api_response = APIResponse(
-                message="Farmer registered successfully",
-                status="success",
-                data={
-                    "farmer_id": "1234",
-                    "farmer_data": farmer_response.dict()
-                }
-            )
-            return jsonify(api_response.dict()), 201
-            
-        except ValidationError as e:
-            error_response = ErrorResponse(
-                error=f"Validation error: {str(e)}",
-                status="error"
-            )
-            return jsonify(error_response.dict()), 400
-            
-        except Exception as e:
-            error_response = ErrorResponse(
-                error=f"Registration failed: {str(e)}",
-                status="error"
-            )
-            return jsonify(error_response.dict()), 500
-
     @app.route('/api/getUserQueryResponse', methods=['POST'])
     def get_user_query_response():
         """Process user query using Mitra multi-agent system."""
@@ -157,63 +95,87 @@ def create_app(config_name='development'):
             else:
                 user_question = "I need farming advice"
             
-            # Debug: Print the actual question being sent
-            print(f"DEBUG: User question: {user_question}")
+            print(f"DEBUG: Processing question: {user_question}")
             
-            # Create unique session for this query
-            import time
-            unique_session_id = f"session_{int(time.time())}_{query_request.farmer_id[:8]}"
-            user_id = query_request.farmer_id
+            # Create unique session for each query
+            unique_session_id = f"session_{uuid.uuid4()}"
+            user_id = query_request.farmer_id or str(uuid.uuid4())
             
-            # Create the session for this specific query
+            # Run async operations
+            async def run_agent_async():
+                # Create a new session
+                await session_service.create_session(
+                    app_name=APP_NAME,
+                    user_id=user_id,
+                    session_id=unique_session_id
+                )
+                
+                # Create the message content
+                new_message = types.Content(
+                    parts=[types.Part(text=user_question)]
+                )
+                
+                print(f"DEBUG: Sending to agent: {user_question}")
+                
+                # Collect all events from the agent
+                all_events = []
+                try:
+                    async for event in runner.run_async(
+                        user_id=user_id,
+                        session_id=unique_session_id,
+                        new_message=new_message
+                    ):
+                        all_events.append(event)
+                        
+                        # Log the response
+                        if hasattr(event, 'content') and event.content:
+                            if hasattr(event.content, 'parts'):
+                                for part in event.content.parts:
+                                    if hasattr(part, 'text'):
+                                        print(f"DEBUG: Agent response preview: {part.text[:100]}...")
+                except Exception as e:
+                    print(f"ERROR: Agent execution failed: {str(e)}")
+                    raise
+                
+                return all_events
+            
+            # Execute the async function
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(session_service.create_session(
-                app_name=APP_NAME,
-                user_id=user_id,
-                session_id=unique_session_id
-            ))
-            loop.close()
+            try:
+                events = loop.run_until_complete(run_agent_async())
+            finally:
+                loop.close()
             
-            # Convert user question to proper Content format
-            new_message = types.Content(
-                parts=[types.Part(text=user_question)]
-            )
+            print(f"DEBUG: Received {len(events)} events")
             
-            # Run the agent and collect the response
-            events = list(runner.run(
-                user_id=user_id,
-                session_id=unique_session_id,
-                new_message=new_message
-            ))
+            # Extract the response
+            response_text = None
             
-            # Extract the response from the events
-            response_text = "No response received from agent"
-            
-            # Look for the actual response in the events
+            # Look for the actual response in events
             for event in events:
                 if hasattr(event, 'content') and event.content:
                     if hasattr(event.content, 'parts') and event.content.parts:
                         for part in event.content.parts:
                             if hasattr(part, 'text') and part.text:
-                                # Skip system messages and look for actual responses
-                                if not part.text.startswith("You are") and not part.text.startswith("I am"):
-                                    response_text = part.text
+                                text = part.text.strip()
+                                # Skip empty responses
+                                if text:
+                                    response_text = text
                                     break
-                        if response_text != "No response received from agent":
-                            break
+                    if response_text:
+                        break
             
-            # If no proper response found, use the last event
-            if response_text == "No response received from agent" and events:
-                last_event = events[-1]
-                response_text = str(last_event)
+            # Fallback if no response
+            if not response_text:
+                response_text = "I apologize, but I couldn't process your query. Please try again."
             
-            print(f"DEBUG: Agent response: {response_text}")
+            print(f"DEBUG: Final response length: {len(response_text)} characters")
             
             # Create response object
             query_response = UserQueryResponse(
-                text_response=str(response_text),
-                voice_response_text=str(response_text),  # Same as text for now
+                text_response=response_text,
+                voice_response_text=response_text,
                 native_language=query_request.native_language or 'Kannada',
                 query_id=str(uuid.uuid4()),
                 image_response=None,
@@ -222,24 +184,129 @@ def create_app(config_name='development'):
             
             return jsonify(query_response.dict()), 200
             
-        except ValueError as e:
-            error_response = ErrorResponse(
-                error=f"Validation error: {str(e)}",
-                status="error"
-            )
-            return jsonify(error_response.dict()), 400
-            
         except Exception as e:
+            print(f"ERROR: Exception in query processing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
             error_response = ErrorResponse(
                 error=f"Query processing failed: {str(e)}",
                 status="error"
             )
             return jsonify(error_response.dict()), 500
-
+        
     return app
 
 
 if __name__ == '__main__':
     app = create_app()
     port = int(os.environ.get('PORT', 3005))
-    app.run(host='0.0.0.0', port=port, debug=True) 
+    app.run(host='0.0.0.0', port=port, debug=True)
+
+
+# """
+# Debug script to test the agent directly without Flask
+# """
+# import os
+# import asyncio
+# from dotenv import load_dotenv
+# from google.adk.sessions import InMemorySessionService
+# from google.adk.runners import Runner
+# from google.genai import types
+# from agents.agent import root_agent
+
+# # Load environment variables
+# load_dotenv()
+
+# async def test_agent_directly():
+#     """Test the agent without Flask to isolate issues"""
+    
+#     # Setup
+#     APP_NAME = "fasal_mitra_kisan"
+#     session_service = InMemorySessionService()
+#     runner = Runner(
+#         agent=root_agent,
+#         app_name=APP_NAME,
+#         session_service=session_service
+#     )
+    
+#     # Test data
+#     user_id = "test_user_123"
+#     session_id = "test_session_123"
+#     test_question = "What is the best crop to grow in summers?"
+    
+#     print(f"Testing with question: {test_question}")
+    
+#     # Create session
+#     await session_service.create_session(
+#         app_name=APP_NAME,
+#         user_id=user_id,
+#         session_id=session_id
+#     )
+    
+#     # Create message
+#     message = types.Content(
+#         parts=[types.Part(text=test_question)]
+#     )
+    
+#     # Run agent
+#     print("\n--- Agent Response ---")
+#     events = []
+#     async for event in runner.run_async(
+#         user_id=user_id,
+#         session_id=session_id,
+#         new_message=message
+#     ):
+#         events.append(event)
+#         if hasattr(event, 'content') and event.content:
+#             if hasattr(event.content, 'parts'):
+#                 for part in event.content.parts:
+#                     if hasattr(part, 'text'):
+#                         print(f"Response: {part.text}")
+    
+#     print(f"\nTotal events: {len(events)}")
+    
+#     # Test with different questions
+#     test_questions = [
+#         "What is the best crop to grow in summers?",
+#         "My tomato plants have yellow leaves, what should I do?",
+#         "What is the current price of wheat in the market?",
+#         "Tell me about PM Kisan scheme"
+#     ]
+    
+#     print("\n--- Testing Multiple Questions ---")
+#     for question in test_questions:
+#         print(f"\nQuestion: {question}")
+        
+#         # New session for each question
+#         session_id = f"session_{question[:10].replace(' ', '_')}"
+#         await session_service.create_session(
+#             app_name=APP_NAME,
+#             user_id=user_id,
+#             session_id=session_id
+#         )
+        
+#         message = types.Content(
+#             parts=[types.Part(text=question)]
+#         )
+        
+#         response_found = False
+#         async for event in runner.run_async(
+#             user_id=user_id,
+#             session_id=session_id,
+#             new_message=message
+#         ):
+#             if hasattr(event, 'content') and event.content:
+#                 if hasattr(event.content, 'parts'):
+#                     for part in event.content.parts:
+#                         if hasattr(part, 'text') and part.text:
+#                             text = part.text.strip()
+#                             if text and not text.startswith("You are"):
+#                                 print(f"Response: {text[:200]}...")
+#                                 response_found = True
+#                                 break
+#             if response_found:
+#                 break
+
+# if __name__ == "__main__":
+#     asyncio.run(test_agent_directly())
