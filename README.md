@@ -1,6 +1,6 @@
 # Welcome to your Lovable project
 
-## Project info
+## Project info Project Kisan
 
 **URL**: https://lovable.dev/projects/c04f8546-7b69-43ad-be24-84491278de1e
 
