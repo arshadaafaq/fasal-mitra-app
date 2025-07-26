@@ -108,17 +108,37 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
       onVoiceQuery(spokenText);
       
       try {
-        // Call Supabase Edge Function for AI processing
-        const { data, error } = await supabase.functions.invoke('voice-assistant', {
-          body: {
-            transcript: spokenText,
-            language: selectedLanguage === 'hi' ? 'hi-IN' : selectedLanguage === 'kn' ? 'kn-IN' : 'en-IN'
-          }
+        // Call backend agent API
+        const response = await fetch('http://127.0.0.1:8000/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            appName: "agents",
+            userId: currentFarmerId,
+            sessionId: currentSessionId,
+            newMessage: {
+              parts: [
+                {
+                  text: spokenText
+                }
+              ],
+              role: "user"
+            }
+          })
         });
 
-        if (error) throw error;
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-        const aiResponse = data.response;
+        const agentResponseData = await response.json();
+        
+        // Parse the response array - get last element's content.parts[0].text
+        const lastElement = agentResponseData[agentResponseData.length - 1];
+        const aiResponse = lastElement.content.parts[0].text;
+        
         setResponse(aiResponse);
 
         // Save interaction to database
