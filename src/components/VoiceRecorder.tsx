@@ -15,6 +15,9 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("");
+  const [currentFarmerId, setCurrentFarmerId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [agentResponse, setAgentResponse] = useState<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const { toast } = useToast();
 
@@ -22,6 +25,44 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
     en: "English",
     hi: "Hindi", 
     kn: "Kannada"
+  };
+
+  const initializeAgentSession = async () => {
+    // Generate random farmer_id and session_id
+    const farmerId = `farmer_${Math.random().toString(36).substring(2, 15)}`;
+    const sessionId = `session_${Math.random().toString(36).substring(2, 15)}`;
+    
+    try {
+      // Make HTTP POST request to agent backend
+      const response = await fetch(`http://127.0.0.1:8000/apps/agents/users/${farmerId}/sessions/${sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({})
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const agentData = await response.json();
+      
+      // Store in variables
+      setCurrentFarmerId(farmerId);
+      setCurrentSessionId(sessionId);
+      setAgentResponse(agentData);
+      
+      return { farmerId, sessionId, agentData };
+    } catch (error) {
+      console.error('Failed to initialize agent session:', error);
+      toast({
+        title: "Session initialization failed",
+        description: "Could not connect to agent backend",
+        variant: "destructive"
+      });
+      throw error;
+    }
   };
 
   const startRecording = async () => {
@@ -33,6 +74,13 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
         variant: "destructive"
       });
       return;
+    }
+
+    // Initialize agent session before starting recording
+    try {
+      await initializeAgentSession();
+    } catch (error) {
+      return; // Exit if session initialization fails
     }
 
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
