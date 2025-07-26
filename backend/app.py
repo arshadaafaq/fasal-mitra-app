@@ -17,7 +17,7 @@ from google.adk.runners import Runner
 from google.genai import types
 
 
-async def create_app(config_name='development'):
+def create_app(config_name='development'):
     """Create and configure the Flask application."""
     app = Flask(__name__)
     app.config.from_object(config[config_name])
