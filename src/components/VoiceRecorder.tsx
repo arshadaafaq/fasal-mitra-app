@@ -48,7 +48,6 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
 
       const agentData = await response.json();
       
-      // Store in variables
       setCurrentFarmerId(farmerId);
       setCurrentSessionId(sessionId);
       setAgentResponse(agentData);
@@ -77,8 +76,12 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
     }
 
     // Initialize agent session before starting recording
+    let farmerId: string | null = null;
+    let sessionId: string | null = null;
     try {
-      await initializeAgentSession();
+      const session = await initializeAgentSession();
+      farmerId = session.farmerId;
+      sessionId = session.sessionId;
     } catch (error) {
       return; // Exit if session initialization fails
     }
@@ -101,14 +104,14 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
       setIsRecording(false);
     };
     
-    recognition.onresult = async (event) => {
+    recognition.onresult = async (event: any) => {
       const spokenText = event.results[0][0].transcript;
       setTranscript(spokenText);
       setIsProcessing(true);
       onVoiceQuery(spokenText);
       
       try {
-        // Call backend agent API
+        // Call backend agent API using local farmerId and sessionId
         const response = await fetch('http://127.0.0.1:8000/run', {
           method: 'POST',
           headers: {
@@ -116,8 +119,8 @@ const VoiceRecorder = ({ selectedLanguage, onVoiceQuery }: VoiceRecorderProps) =
           },
           body: JSON.stringify({
             appName: "agents",
-            userId: currentFarmerId,
-            sessionId: currentSessionId,
+            userId: farmerId,
+            sessionId: sessionId,
             newMessage: {
               parts: [
                 {
